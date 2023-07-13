@@ -1,3 +1,4 @@
+//#include "MIDIUSB.h"
 #define NUM_GREAT 61
 #define NUM_SWELL 61
 #define NUM_PISTON 15
@@ -8,12 +9,12 @@
 // Pedal = 'p'
 // Pistons = 'b'
 // Test = 't'
-
-//const char manuals [] = "t";
 const char manuals [] = "gspb";
-//char translator[] = {"activeTest"};
-//const char *translator[] = {"activeGreat", "activeSwell", "activePedal", "activePistons"};
 const int digitalInPin1 = 7;       // Analog input pin connected to the multiplexer
+const int swellInPin;
+const int greatInPin;
+const int pedalInPin;
+const int pistonInPin;
 const int muxCtrlPinA = 2;        // Multiplexer control pin A
 const int muxCtrlPinB = 3;        // Multiplexer control pin B
 const int muxCtrlPinC = 4;        // Multiplexer control pin C
@@ -21,19 +22,19 @@ const int muxCtrlPinD = 5;        // Multiplexer control pin D
 const int numOfMuxChannels = 16;  // Number of channels in the multiplexer
 const int numOfBanks = 1;         // Number of Banks(Multiplexers) to poll - Note: All polled via the same control pins
 int currentChannel = 0;           // Variable to store the current channel being read
-bool keyPress[10];                    // Boolean to store if a keypress is being registered
-uint32_t activeGreat = 0x80000000;
-uint32_t standbyGreat = 0x80000000;
-uint32_t pastGreat = 0x80000000;
-uint32_t activeSwell = 0x80000000;
-uint32_t standbySwell = 0x80000000;
-uint32_t pastSwell = 0x80000000;
+bool keyPress[20];                    // Boolean to store if a keypress is being registered
+uint64_t activeGreat = 0x8000000000000000;
+uint64_t standbyGreat = 0x8000000000000000;
+uint64_t pastGreat = 0x8000000000000000;
+uint64_t activeSwell = 0x8000000000000000;
+uint64_t standbySwell = 0x8000000000000000;
+uint64_t pastSwell = 0x8000000000000000;
 uint32_t activePedal = 0x80000000;
 uint32_t standbyPedal = 0x80000000;
 uint32_t pastPedal = 0x80000000;
-uint32_t activePistons = 0x80000000;
-uint32_t standbyPistons = 0x80000000;
-uint32_t pastPistons = 0x80000000;
+uint64_t activePistons = 0x8000000000000000;
+uint64_t standbyPistons = 0x8000000000000000;
+uint64_t pastPistons = 0x8000000000000000;
 int byteLength;
 byte checkActive;
 byte checkPast;
@@ -81,7 +82,7 @@ void readKeys()
 //        Serial.print(standbyGreat, BIN);
       }
     }
-    for (int m = 11; m < 15; m++) // This won't need 4 banks, adjust later.
+    for (int m = 11; m < 13; m++) // Note: 2 Banks/Multiplexers only! Only 31 Pedal notes
     {
       keyPress[m] = digitalRead(digitalInPin1);
       if (keyPress[m] == LOW)
@@ -131,64 +132,71 @@ void checkForKeyChanges()
 //delay(1000);
   if (activeSwell != pastSwell)
   {
-    byteLength = String(activeSwell, BIN).length() - 1;   // Iterate through the uintx_t
+    // This is broken... But, becuase the byte is always the same length (as the 64th bit is set high), I don't think I need this?
+//    byteLength = String(activeSwell, BIN).length() - 1;   // Iterate through the uintx_t
+    byteLength = 62; // 64 bits but accounting for the 0-index and the preset 64th bit
     for (byte i = 0; i < byteLength; i++)
     {
       checkActive = bitRead(activeSwell, i);
       checkPast = bitRead(pastSwell, i);
-      controller(checkPast, checkActive, i, 's');
+      controller(checkPast, checkActive, i + 24, 's', 0);
     }
     pastSwell = activeSwell;
     resetActive('s');
   }
   if (activeGreat != pastGreat)
   {
-    byteLength = String(activeGreat, BIN).length() - 1;   // Iterate through the uintx_t
+    byteLength = 62; // 64 bits but accounting for the 0-index
     for (byte i = 0; i < byteLength; i++)
     {
       checkActive = bitRead(activeGreat, i);
       checkPast = bitRead(pastGreat, i);
-      controller(checkPast, checkActive, i, 'g');
+      controller(checkPast, checkActive, i + 24, 'g', 1);
     }
     pastGreat = activeGreat;
     resetActive('g');
   }
   if (activePedal != pastPedal)
   {
-    byteLength = String(activePedal, BIN).length() - 1;   // Iterate through the uintx_t
-    for (byte i = 0; i < byteLength; i++)
+    byteLength = 31; // 32 bits but accounting for the 0-index
+    for (byte i = 0; i <= byteLength; i++)
     {
       checkActive = bitRead(activePedal, i);
       checkPast = bitRead(pastPedal, i);
-      controller(checkPast, checkActive, i, 'p');
+      controller(checkPast, checkActive, i + 24, 'p', 2);
     }
     pastPedal = activePedal;
     resetActive('p');
   }
   if (activePistons != pastPistons)
   {
-    byteLength = String(activePistons, BIN).length() - 1;   // Iterate through the uintx_t
+    byteLength = 62; // 64 bits but accounting for the 0-index
     for (byte i = 0; i < byteLength; i++)
     {
       checkActive = bitRead(activePistons, i);
       checkPast = bitRead(pastPistons, i);
-      controller(checkPast, checkActive, i, 'b');
+      controller(checkPast, checkActive, i + 24, 'b', 3);
     }
     pastPistons = activePistons;
     resetActive('b');
   }
 }
 
-void controller(byte checkPast, byte checkActive, byte key, char reg)
+void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_channel)
 {
   if (checkActive == 1 && checkPast == 0)     //If a key is pressed
   {
-    sendStartSignal(key + 1, reg);       //This bit should already be the number of the key + 1- e.g. the 0th bit is the 1st key)
+    sendStartSignal(key, reg);       //Updated - Key should now reflect the midi key value. (old: This bit should already be the number of the key + 1- e.g. the 0th bit is the 1st key))
+//  midiEventPacket_t noteOn = {0x09, 0x90 | reg_channel, key, 127);  // Might need to set velocity to 64?
+//  MidiUSB.sendMIDI(noteOn); 
   }
   if (checkActive == 0 && checkPast == 1)     //If a key is realeased
   {
-    sendStopSignal( key+ 1, reg);
+    sendStopSignal( key, reg);
+//  midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127);  // Might need to set velocity to 64?
+//  MidiUSB.sendMIDI(noteOff);  
   }
+//  MidiUSB.flushUSB();
 }
 
 void resetActive(char man_sel)
@@ -196,11 +204,11 @@ void resetActive(char man_sel)
   Serial.println("reset called");
   if (man_sel == 's')
   {
-    activeSwell = 0x80000000;
+    activeSwell = 0x8000000000000000;
   }
     if (man_sel == 'g')
   {
-    activeGreat = 0x80000000;
+    activeGreat = 0x8000000000000000;
   }
     if (man_sel == 'p')
   {
@@ -208,29 +216,32 @@ void resetActive(char man_sel)
   }
     if (man_sel == 'b')
   {
-    activePistons = 0x80000000;
+    activePistons = 0x8000000000000000;
   }
 }
 
 void resetStandby()
 {
-  standbyGreat = 0x80000000;
-  standbySwell = 0x80000000;
+  standbyGreat = 0x8000000000000000;
+  standbySwell = 0x8000000000000000;
   standbyPedal = 0x80000000;
-  standbyPistons = 0x80000000;
+  standbyPistons = 0x8000000000000000;
 }
 
 void sendStartSignal(int key, char man_sel)
 {
   Serial.print("Called the Start Signal");
+  Serial.print(": ");
+  Serial.print(key, DEC);
   Serial.print(" - ");
-  Serial.println(key, DEC);
-  //First practice over serial, then impliment SPI, then impliment MIDI
+  Serial.println(man_sel);
 }
 
 void sendStopSignal(int key, char man_sel)
 {
   Serial.print("Called the Stop Signal");
+  Serial.print(": ");
+  Serial.print(key, DEC);
   Serial.print(" - ");
   Serial.println(man_sel);
 }

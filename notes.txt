@@ -1,0 +1,47 @@
+61 notes - Manual
+C2 - C7
+(24 - 84)
+Pedal - 
+C2 - G4
+(24 - 55)
+
+const byte manualPitches[(look for define of great numbers)] = {C2, C#2, D2, D#2, E2, F2, F#2, G2, G#2, A2, A#2, B2};
+const byte pedalPitches[] {};
+
+Just do the bit location (starting at 0) plus 24 to get the proper midi pitch.
+
+
+// First parameter is the event type (0x09 = note on, 0x08 = note off).
+// Second parameter is note-on/note-off, combined with the channel.
+// Channel can be anything between 0-15. Typically reported to the user as 1-16.
+// Third parameter is the note number (48 = middle C).
+// Fourth parameter is the velocity (64 = normal, 127 = fastest).
+
+void noteOn(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOn = {0x09, 0x90 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOn);
+}
+
+void noteOff(byte channel, byte pitch, byte velocity) {
+
+  midiEventPacket_t noteOff = {0x08, 0x80 | channel, pitch, velocity};
+
+  MidiUSB.sendMIDI(noteOff);
+}
+
+It might be worth considering using the midi control change spec for the pistons
+
+
+// First parameter is the event type (0x0B = control change).
+// Second parameter is the event type, combined with the channel.
+// Third parameter is the control number number (0-119).
+// Fourth parameter is the control value (0-127).
+
+void controlChange(byte channel, byte control, byte value) {
+
+  midiEventPacket_t event = {0x0B, 0xB0 | channel, control, value};
+
+  MidiUSB.sendMIDI(event);
+}
