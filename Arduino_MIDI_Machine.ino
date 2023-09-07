@@ -1,3 +1,15 @@
+// Adjusting built-in bit macros to work with 64-bit data types
+// Thanks, Ron B! https://forum.dronebotworkshop.com/c-plus-plus/extended-arduino-bit-operator-macros/
+
+#undef bitRead
+#undef bitSet
+#undef bitClear
+#undef bitWrite
+#define bitRead(value,  bit) (((value) >> (bit)) & 1ULL)
+#define bitSet(value,   bit) ((value) |=  (1ULL << (bit)))
+#define bitClear(value, bit) ((value) &= ~(1ULL << (bit)))
+#define bitWrite(value, bit, bitvalue) (bitvalue ? bitSet(value, bit) : bitClear(value,  bit))
+
 #include "MIDIUSB.h"
 #define NUM_GREAT 61
 #define NUM_SWELL 61
@@ -18,7 +30,7 @@ const int swellInPin[] = {47, 49, 50, 52};
 //const int swellInPin4 = 53;
 const int greatInPin[] = {41};
 const int pedalInPin[] = {42};
-const int pistonInPin[] = {23};
+const int pistonInPin[] = {35};
 const int muxCtrlPinA = 4;        // Multiplexer control pin A
 const int muxCtrlPinB = 5;        // Multiplexer control pin B
 const int muxCtrlPinC = 6;        // Multiplexer control pin C
@@ -39,6 +51,12 @@ uint32_t pastPedal = 0x80000000;
 uint64_t activePistons = 0x8000000000000000;
 uint64_t standbyPistons = 0x8000000000000000;
 uint64_t pastPistons = 0x8000000000000000;
+//Trying some debouce stuff here
+uint64_t debounceSwell = 0x8000000000000000;
+uint64_t debounceGreat = 0x8000000000000000;
+uint64_t debouncePedal = 0x8000000000000000;
+uint64_t debouncePistons = 0x8000000000000000;
+
 int byteLength;
 byte checkActive;
 byte checkPast;
@@ -102,24 +120,25 @@ void readKeys()
     setMuxChannel(i);  // Set the multiplexer to the current channel. For 1-4...
     for (int m = 1; m < 5; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
     {
-      keyPress[m] = digitalRead(swellInPin[m-1]); //gonna have to adjust this...
-      if (keyPress[m] == LOW)
+      keyPress[i] = digitalRead(swellInPin[m-1]);
+      if (keyPress[i] == LOW && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
       {
-        delay(1);
-        if (digitalRead(swellInPin[m-1]) == LOW)
-        {
-          bitWrite(standbySwell, i + (m*16) - 16, 1);      //  This is the SWELL
-        }
+        bitWrite(standbySwell, i + (m*16) - 16, 1);      //  Swell On
       }
-      if (keyPress[m] == HIGH)
+      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
       {
-        delay(1);
-        if (digitalRead(swellInPin[m-1]) == HIGH)
-        {
-          bitWrite(standbySwell, i + (m*16) - 16, 0);
-        }  
+        bitWrite(standbySwell, i + (m*16) - 16, 0);      //  Swell Off
       }
-      keyPress[m] == HIGH; //Reset the keyPress for the next use.
+      if (keyPress[i] == LOW)
+      {
+        bitWrite(debounceSwell, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
+      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
+                                                         //  then set the actual standby value HIGH
+      if (keyPress[i] == HIGH)
+      {
+        bitWrite(debounceSwell, i + (m*16) - 16, 0);
+      }
+      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
     }
 //    for (int m = 6; m < 10; m++)
 //    {
@@ -140,6 +159,28 @@ void readKeys()
 //        keyPress[m] = HIGH;
 //      }
 //    }
+    for (int m = 1; m < 2; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
+    {
+      keyPress[i] = digitalRead(pistonInPin[m-1]);
+//      if (keyPress[i] == LOW && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
+//      {
+      if (1 == 1)  {
+        bitWrite(standbyPistons, i + (m*16) - 16, 1);      //  Piston On
+      }
+      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
+      {
+        bitWrite(standbyPistons, i + (m*16) - 16, 0);      //  Piston Off
+      }
+      if (keyPress[i] == LOW)
+      {
+        bitWrite(debouncePistons, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
+      }                                                        //  If it's still LOW when we get back to it above, after a cycle,
+      if (keyPress[i] == HIGH)                                 //  then set the actual standby value HIGH
+      {
+        bitWrite(debouncePistons, i + (m*16) - 16, 0);
+      }
+      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
+    }
 //    for (int m = 5; m <= 15; m += 5)
 //    {
 //      keyPress[m] = digitalRead(digitalInPin1);
@@ -177,7 +218,7 @@ void checkForKeyChanges()
 //  Serial.println(activePistons, HEX);
 //  Serial.print("Past   - ");
 //  Serial.println(pastSwell, HEX);
-  delay(10);
+//  delay(10);
   if (activeSwell != pastSwell)
   {
     // This is broken... But, becuase the byte is always the same length (as the 64th bit is set high), I don't think I need this?
@@ -234,17 +275,17 @@ void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_c
 {
   if (checkActive == 1 && checkPast == 0)     //If a key is pressed
   {
-    sendStartSignal(key, reg);       //Updated - Key should now reflect the midi key value. (old: This bit should already be the number of the key + 1- e.g. the 0th bit is the 1st key))
-//  midiEventPacket_t noteOn = {0x09, 0x90 | reg_channel, key, 127};  // Might need to set velocity to 64?
-//  MidiUSB.sendMIDI(noteOn); 
+//    sendStartSignal(key, reg);       //Updated - Key should now reflect the midi key value. (old: This bit should already be the number of the key + 1- e.g. the 0th bit is the 1st key))
+    midiEventPacket_t noteOn = {0x09, 0x90 | reg_channel, key, 127};  // Might need to set velocity to 64?
+    MidiUSB.sendMIDI(noteOn); 
   }
   if (checkActive == 0 && checkPast == 1)     //If a key is realeased
   {
-    sendStopSignal( key, reg);
-//  midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127};  // Might need to set velocity to 64?
-//  MidiUSB.sendMIDI(noteOff);  
+//    sendStopSignal( key, reg);  
+    midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127};  // Might need to set velocity to 64?
+    MidiUSB.sendMIDI(noteOff);  
   }
-//MidiUSB.flush();
+MidiUSB.flush();
 }
 
 
