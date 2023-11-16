@@ -16,28 +16,23 @@
 #define NUM_GREAT 61
 #define NUM_SWELL 61
 #define NUM_PISTON 15
-#define NUM_BUTTONS 16 //Testing
+#define NUM_PEDALS 31
 // For the record, manuals will be refered to with a 'char' - as follows:
 // Great = 'g'
 // Swell = 's'
 // Pedal = 'p'
 // Pistons = 'b'
 // Test = 't'
-const char manuals [] = "gspb";
-//const int digitalInPin1 = 52;       // Analog input pin connected to the multiplexer
+//const char manuals [] = "gspb";
 const int swellInPin[] = {28, 26, 24, 22};
 const int greatInPin[] = {36, 34, 32, 30};
 const int pedalInPin[] = {42};
 const int pistonInPin[] = {23, 31}; //Add 31 after pull-up resistors are added
-//const int muxCtrlPinA = 4;        // Multiplexer control pin A
-//const int muxCtrlPinB = 5;        // Multiplexer control pin B
-//const int muxCtrlPinC = 6;        // Multiplexer control pin C
-//const int muxCtrlPinD = 7;        // Multiplexer control pin D
 const int muxCtrlPin[] = {4, 5, 6, 7}; //Multiplexer control pins A, B, C, and D
 const int numOfMuxChannels = 16;  // Number of channels in the multiplexer
-const int numOfBanks = 1;         // Number of Banks(Multiplexers) to poll - Note: All polled via the same control pins
-int currentChannel = 0;           // Variable to store the current channel being read
-bool keyPress[20];                    // Boolean to store if a keypress is being registered
+//const int numOfBanks = 1;         // Number of Banks(Multiplexers) to poll - Note: All polled via the same control pins
+//int currentChannel = 0;           // Variable to store the current channel being read
+bool keyPress[16];                    // Boolean to store if a keypress is being registered
 uint64_t activeGreat = 0x8000000000000000;
 uint64_t standbyGreat = 0x8000000000000000;
 uint64_t pastGreat = 0x8000000000000000;
@@ -59,18 +54,18 @@ uint64_t debouncePistons = 0x8000000000000000;
 int byteLength;
 byte checkActive;
 byte checkPast;
-int numMan = String(manuals).length();
-int lastKeyPressed = 0;
-int lastKeyPressedAddr = 0;
-const int numOfRJ45 = 2;
-const int RJ45Pins[] = {12, 13};
-bool keyboardEnable[4]; 
+//int numMan = String(manuals).length();
+//int lastKeyPressed = 0;
+//int lastKeyPressedAddr = 0;
+//const int numOfRJ45 = 2;
+//const int RJ45Pins[] = {12, 13};
+//bool keyboardEnable[4]; 
+const int connectionLED[] = {13, 13};
+const int activeLED[] = {73, 72};
+bool isManualActive[3];
+uint32_t manualActiveTime[3];
 
 void setup() {
-//  pinMode(muxCtrlPinA, OUTPUT);
-//  pinMode(muxCtrlPinB, OUTPUT);
-//  pinMode(muxCtrlPinC, OUTPUT);
-//  pinMode(muxCtrlPinD, OUTPUT);
   for (int s = 0; s < 4; s++)  // For 0-3...
   {
     pinMode(muxCtrlPin[s], OUTPUT);
@@ -80,40 +75,53 @@ void setup() {
   for (int s = 0; s < 2; s++) //For 0-1...
   {
     pinMode(pistonInPin[s], INPUT);
-  }  
-//  pinMode(swellInPin[0], INPUT);
-//  pinMode(swellInPin[1], INPUT);
-//  pinMode(swellInPin[2], INPUT);
-//  pinMode(swellInPin[3], INPUT);
-//  pinMode(greatInPin[0], INPUT);
-//  pinMode(greatInPin[1], INPUT);
-//  pinMode(greatInPin[2], INPUT);
-//  pinMode(greatInPin[3], INPUT);
+    pinMode(activeLED[s], OUTPUT);
+    digitalWrite(activeLED[s], HIGH);
+  }
+  pinMode(13, OUTPUT);
 
   Serial.begin(115200);
   // Some other setup
-  //checkForConnections();
 }
 void loop() {
 //  Serial.println(micros()); // For benchmarking
+  //delay(100);
   readKeys();
   checkForKeyChanges();
+  statusController();
 }
 
-void checkForConnections()
+void statusController() // Controls status and activity LEDs
 {
-  for (int i = 0; i < numOfRJ45; i++)
+  for (int man = 0; man < 2; man++) // For manuals 0 and 1...
   {
-    pinMode(i, INPUT_PULLUP); //Wiring note: Run from pin, to led+ local, to ethernet pin via resistor, to led+ remote, to ground/shield 
-    if (digitalRead(i) == HIGH);
+    if (((millis()/1000) % 2 == 0) && digitalRead(connectionLED[man]) == LOW) // If off and an even second
     {
-      keyboardEnable[i] = false;
+      digitalWrite(connectionLED[man], HIGH);
     }
-    if (digitalRead(i) == LOW);   // If the cable is connected, and the pin / led is connected to ground...
+    if (((millis()/1000) % 2 != 0) && digitalRead(connectionLED[man]) == HIGH) // If on and an odd second
     {
-      pinMode(i, OUTPUT);
-      digitalWrite(i, HIGH);      // Turn on the ethernet LED, indicating connections.
-      keyboardEnable[i] = true;
+      digitalWrite(connectionLED[man], LOW);
+    }
+
+    if (isManualActive[man] == true)
+    {
+      if(millis() > manualActiveTime[man] + 1000)
+      {
+        digitalWrite(activeLED[man], HIGH);
+        isManualActive[man] = false;
+      }
+      else
+      {
+        if ((millis() / 100) % 2 == 0 && digitalRead(activeLED[man]) == HIGH)
+        {
+          digitalWrite(activeLED[man], LOW);
+        }
+        if ((millis() / 100) % 2 != 0 && digitalRead(activeLED[man]) == LOW)
+        {
+          digitalWrite(activeLED[man], HIGH);
+        }
+      }
     }
   }
 }
@@ -139,17 +147,16 @@ void resetActive(char man_sel)
   }
 }
 
-void resetStandby()
-{
-  standbyGreat = 0x8000000000000000;
-  standbySwell = 0x8000000000000000;
-  standbyPedal = 0x80000000;
-  standbyPistons = 0x8000000000000000;
-}
+//void resetStandby()
+//{
+//  standbyGreat = 0x8000000000000000;
+//  standbySwell = 0x8000000000000000;
+//  standbyPedal = 0x80000000;
+//  standbyPistons = 0x8000000000000000;
+//}
 
 void readKeys()
 {
-  //char readKeyPlaceholder;
   int reversed_i;
   for (int i = 0; i < numOfMuxChannels; i++)  // For 0-15...
   {
@@ -176,7 +183,6 @@ void readKeys()
       {
         bitWrite(debounceSwell, i + (m*16) - 16, 0);
       }
-//      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
 //    ============ GREAT ============
       keyPress[reversed_i] = digitalRead(greatInPin[m-1]);
       if (keyPress[reversed_i] == LOW && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
@@ -196,7 +202,6 @@ void readKeys()
       {
         bitWrite(debounceGreat, reversed_i + (m*16) - 16, 0);
       }
-      //keyPress[reversed_i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
     }
     //PISTONS
     for (int m = 1; m < 3; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
@@ -239,18 +244,6 @@ void setMuxChannel(int channel) {
 
 void checkForKeyChanges()
 {
-//  Serial.println(keyPress[0]);
-//  Serial.print("Active - ");
-//  Serial.print(activeSwell, HEX);
-//  Serial.print(" - ");
-//  Serial.print(activeGreat, HEX);
-//  Serial.print(" - ");
-//  Serial.print(activePedal, HEX);
-//  Serial.print(" - ");
-//  Serial.println(activePistons, HEX);
-//  Serial.print("Past   - ");
-//  Serial.println(pastSwell, HEX);
-//  delay(10);
   if (activeSwell != pastSwell)
   {
     // This is broken... But, becuase the byte is always the same length (as the 64th bit is set high), I don't think I need this?
@@ -262,6 +255,9 @@ void checkForKeyChanges()
       checkPast = bitRead(pastSwell, i);
       controller(checkPast, checkActive, i + 24, 's', 0);
     }
+    isManualActive[0] = true;
+    manualActiveTime[0] = millis();
+    MidiUSB.flush();
     pastSwell = activeSwell;
     resetActive('s');
   }
@@ -274,6 +270,9 @@ void checkForKeyChanges()
       checkPast = bitRead(pastGreat, i);
       controller(checkPast, checkActive, i + 24, 'g', 1);
     }
+    isManualActive[1] = true;
+    manualActiveTime[1] = millis();
+    MidiUSB.flush();
     pastGreat = activeGreat;
     resetActive('g');
   }
@@ -286,6 +285,9 @@ void checkForKeyChanges()
       checkPast = bitRead(pastPedal, i);
       controller(checkPast, checkActive, i + 24, 'p', 2);
     }
+    isManualActive[2] = true;
+    manualActiveTime[2] = millis();
+    MidiUSB.flush();
     pastPedal = activePedal;
     resetActive('p');
   }
@@ -298,6 +300,7 @@ void checkForKeyChanges()
       checkPast = bitRead(pastPistons, i);
       controller(checkPast, checkActive, i + 24, 'b', 3);
     }
+    MidiUSB.flush();
     pastPistons = activePistons;
     resetActive('b');
   }
@@ -317,7 +320,7 @@ void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_c
     midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127};  // Might need to set velocity to 64?
     MidiUSB.sendMIDI(noteOff);  
   }
-MidiUSB.flush();
+//MidiUSB.flush(); //Moved to checkForKeyChanges()
 }
 
 void sendStartSignal(int key, char man_sel)
