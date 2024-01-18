@@ -50,20 +50,18 @@ uint64_t debounceSwell = 0x8000000000000000;
 uint64_t debounceGreat = 0x8000000000000000;
 uint64_t debouncePedal = 0x8000000000000000;
 uint64_t debouncePistons = 0x8000000000000000;
+int debounceArray[4][63];
 
 int byteLength;
 byte checkActive;
 byte checkPast;
-//int numMan = String(manuals).length();
-//int lastKeyPressed = 0;
-//int lastKeyPressedAddr = 0;
-//const int numOfRJ45 = 2;
-//const int RJ45Pins[] = {12, 13};
-//bool keyboardEnable[4]; 
 const int connectionLED[] = {13, 13};
 const int activeLED[] = {73, 72};
 bool isManualActive[3];
 uint32_t manualActiveTime[3];
+bool keyEvent;
+uint32_t lastPush;
+int refreshInterval = 1000; //Milliseconds
 
 void setup() {
   for (int s = 0; s < 4; s++)  // For 0-3...
@@ -84,11 +82,259 @@ void setup() {
   // Some other setup
 }
 void loop() {
-//  Serial.println(micros()); // For benchmarking
-  //delay(100);
   readKeys();
   checkForKeyChanges();
+//  flushMIDIbuffer();
+//  refresh();
   statusController();
+}
+
+void readKeys()
+{
+  int reversed_i;
+  const int debounceThreshold = 2;
+  for (int i = 0; i < numOfMuxChannels; i++)  // For 0-15...
+  {
+    setMuxChannel(i);  // Set the multiplexer to the current channel. For Input 0-15...
+    reversed_i = map(i, 0, 15, 15, 0);  // Some multiplexers are reversed - this accommodates that.
+    for (int m = 1; m < 5; m++) //Each keyboard has 4 multiplexers (plus 1 for pistons, but that's seperate). Pedals will be different
+    {
+      keyPress[i] = digitalRead(swellInPin[m-1]);
+//    ============ SWELL ============
+      if (keyPress[i] == LOW)
+      {
+        if (debounceArray[0][i + (m*16) - 16] < debounceThreshold) 
+        {
+          debounceArray[0][i + (m*16) - 16]++;
+        } 
+        else if (debounceArray[0][i + (m*16) - 16] >= debounceThreshold) 
+        {
+          bitWrite(standbySwell, i + (m * 16) - 16, 1);
+          debounceArray[0][i + (m*16) - 16]++;
+        }
+      } 
+      else {
+        debounceArray[0][i + (m*16) - 16] = 0; // Reset the counter when the key is released
+        bitWrite(standbySwell, i + (m * 16) - 16, 0);  // And flip the active bit for the swell.
+      }
+
+//      if (keyPress[i] == LOW && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
+//      {
+//        bitWrite(standbySwell, i + (m*16) - 16, 1);      //  Swell On
+//      }
+//      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
+//      {
+//        bitWrite(standbySwell, i + (m*16) - 16, 0);      //  Swell Off
+//      }
+//      if (keyPress[i] == LOW)
+//      {
+//        bitWrite(debounceSwell, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
+//      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
+//                                                         //  then set the actual standby value HIGH
+//      if (keyPress[i] == HIGH)
+//      {
+//        bitWrite(debounceSwell, i + (m*16) - 16, 0);
+//      }
+//    ============ GREAT ============
+      keyPress[reversed_i] = digitalRead(greatInPin[m-1]);
+//      if (keyPress[reversed_i] == LOW && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
+//      {
+//        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 1);      //  Great On
+//      }
+//      if (keyPress[reversed_i] == HIGH && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
+//      {
+//        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 0);      //  Great Off
+//      }
+//      if (keyPress[reversed_i] == LOW)
+//      {
+//        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
+//      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
+//                                                         //  then set the actual standby value HIGH
+//      if (keyPress[reversed_i] == HIGH)
+//      {
+//        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 0);
+//      }
+      if (keyPress[reversed_i] == LOW)
+      {
+        if (debounceArray[1][reversed_i + (m*16) - 16] < debounceThreshold) 
+        {
+          debounceArray[1][reversed_i + (m*16) - 16]++;
+        } 
+        else if (debounceArray[1][reversed_i + (m*16) - 16] >= debounceThreshold) 
+        {
+          bitWrite(standbyGreat, reversed_i + (m * 16) - 16, 1);
+          debounceArray[1][reversed_i + (m*16) - 16]++;
+        }
+      } 
+      else {
+        debounceArray[1][reversed_i + (m*16) - 16] = 0; // Reset the counter when the key is released
+        bitWrite(standbyGreat, reversed_i + (m * 16) - 16, 0);  // And flip the active bit for the swell.
+      }
+    }
+    //PISTONS
+    for (int m = 1; m < 3; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
+    {
+      keyPress[i] = digitalRead(pistonInPin[m-1]);
+//      if (keyPress[i] == LOW && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
+//      {
+      if (1 == 1)  {
+        bitWrite(standbyPistons, i + (m*16) - 16, 1);      //  Piston On
+      }
+      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
+      {
+        bitWrite(standbyPistons, i + (m*16) - 16, 0);      //  Piston Off
+      }
+      if (keyPress[i] == LOW)
+      {
+        bitWrite(debouncePistons, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
+      }                                                        //  If it's still LOW when we get back to it above, after a cycle,
+      if (keyPress[i] == HIGH)                                 //  then set the actual standby value HIGH
+      {
+        bitWrite(debouncePistons, i + (m*16) - 16, 0);
+      }
+      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
+    }
+  }
+  activeGreat = standbyGreat;
+  activeSwell = standbySwell;
+  activePedal = standbyPedal;
+  activePistons = standbyPistons;
+  
+}
+
+void setMuxChannel(int channel) {
+  digitalWrite(muxCtrlPin[0], bitRead(channel, 0)); // A
+  digitalWrite(muxCtrlPin[1], bitRead(channel, 1)); // B
+  digitalWrite(muxCtrlPin[2], bitRead(channel, 2)); // C
+  digitalWrite(muxCtrlPin[3], bitRead(channel, 3)); // D
+}
+
+void checkForKeyChanges()
+{
+  if (activeSwell != pastSwell)
+  {
+    byteLength = 62; // 64 bits but accounting for the 0-index and the preset 64th bit
+    for (byte i = 0; i < byteLength; i++)
+    {
+      checkActive = bitRead(activeSwell, i);
+      checkPast = bitRead(pastSwell, i);
+      controller(checkPast, checkActive, i + 24, 's', 0);
+//      bitWrite(pastSwell, i, checkActive);
+    }
+    isManualActive[0] = true;
+    manualActiveTime[0] = millis();
+    pastSwell = activeSwell;
+  }
+  
+  if (activeGreat != pastGreat)
+  {
+    byteLength = 62; // 64 bits but accounting for the 0-index
+    for (byte i = 0; i < byteLength; i++)
+    {
+      checkActive = bitRead(activeGreat, i);
+      checkPast = bitRead(pastGreat, i);
+      controller(checkPast, checkActive, i + 24, 'g', 1);
+    }
+    isManualActive[1] = true;
+    manualActiveTime[1] = millis();
+    pastGreat = activeGreat;
+  }
+  
+  if (activePedal != pastPedal)
+  {
+    byteLength = 31; // 32 bits but accounting for the 0-index
+    for (byte i = 0; i <= byteLength; i++)
+    {
+      checkActive = bitRead(activePedal, i);
+      checkPast = bitRead(pastPedal, i);
+      controller(checkPast, checkActive, i + 24, 'p', 2);
+    }
+    isManualActive[2] = true;
+    manualActiveTime[2] = millis();
+    pastPedal = activePedal;
+  }
+  if (activePistons != pastPistons)
+  {
+    byteLength = 62; // 64 bits but accounting for the 0-index
+    for (byte i = 0; i < byteLength; i++)
+    {
+      checkActive = bitRead(activePistons, i);
+      checkPast = bitRead(pastPistons, i);
+      controller(checkPast, checkActive, i + 24, 'b', 3);
+    }
+    pastPistons = activePistons;
+  }
+}
+
+void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_channel)
+{
+  if (checkActive == 1 && checkPast == 0)     //If a key is pressed
+  {
+    midiEventPacket_t noteOn = {0x09, 0x90 | reg_channel, key, 127};  // Might need to set velocity to 64?
+    MidiUSB.sendMIDI(noteOn); 
+    keyEvent = true;
+    delayMicroseconds(70);
+  }
+  if (checkActive == 0 && checkPast == 1)     //If a key is realeased
+  {
+    midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127};  // Might need to set velocity to 64?
+    MidiUSB.sendMIDI(noteOff);  
+    keyEvent = true;
+    delayMicroseconds(70);  
+  }
+MidiUSB.flush();
+}
+
+void flushMIDIbuffer()
+{
+  if (keyEvent == true)
+  {
+    MidiUSB.flush();
+    keyEvent = false;
+  }
+}
+
+void refresh()
+{
+  bool isSwellActive, isGreatActive, isPedalActive;
+  if (millis() - lastPush >= refreshInterval)
+  {
+    lastPush = millis();
+    for (byte i = 0; i < 62; i++)
+    {
+      isSwellActive = bitRead(activeSwell, i);
+      if (isSwellActive)
+      {
+        controller(0, bitRead(activeSwell, i), i + 24, 's', 0);
+      }
+      if (!isSwellActive)
+      {
+        controller(1, bitRead(activeSwell, i), i + 24, 's', 0);
+      }
+      isGreatActive = bitRead(activeGreat, i);
+      if (isGreatActive)
+      {
+        controller(0, bitRead(activeGreat, i), i + 24, 'g', 1);
+      }
+      if (!isGreatActive)
+      {
+        controller(1, bitRead(activeGreat, i), i + 24, 'g', 1);
+      }
+    }
+    for (byte i = 0; i < 31; i++)
+    {
+      isPedalActive = bitRead(activePedal, i);
+      if (isPedalActive)
+      {
+        controller(0, bitRead(activePedal, i), i + 24, 'p', 2);
+      }
+      if (!isPedalActive)
+      {
+        controller(1, bitRead(activePedal, i), i + 24, 'p', 2);
+      }
+    }
+   MidiUSB.flush();
+  }
 }
 
 void statusController() // Controls status and activity LEDs
@@ -126,217 +372,23 @@ void statusController() // Controls status and activity LEDs
   }
 }
 
-void resetActive(char man_sel)
-{
-  //Serial.println("reset called");
-  if (man_sel == 's')
-  {
-    activeSwell = 0x8000000000000000;
-  }
-    if (man_sel == 'g')
-  {
-    activeGreat = 0x8000000000000000;
-  }
-    if (man_sel == 'p')
-  {
-    activePedal = 0x80000000;
-  }
-    if (man_sel == 'b')
-  {
-    activePistons = 0x8000000000000000;
-  }
-}
-
-//void resetStandby()
+//void resetActive(char man_sel)
 //{
-//  standbyGreat = 0x8000000000000000;
-//  standbySwell = 0x8000000000000000;
-//  standbyPedal = 0x80000000;
-//  standbyPistons = 0x8000000000000000;
+//  //Serial.println("reset called");
+//  if (man_sel == 's')
+//  {
+//    activeSwell = 0x8000000000000000;
+//  }
+//    if (man_sel == 'g')
+//  {
+//    activeGreat = 0x8000000000000000;
+//  }
+//    if (man_sel == 'p')
+//  {
+//    activePedal = 0x80000000;
+//  }
+//    if (man_sel == 'b')
+//  {
+//    activePistons = 0x8000000000000000;
+//  }
 //}
-
-void readKeys()
-{
-  int reversed_i;
-  for (int i = 0; i < numOfMuxChannels; i++)  // For 0-15...
-  {
-    setMuxChannel(i);  // Set the multiplexer to the current channel. For 1-4...
-    reversed_i = map(i, 0, 15, 15, 0);  // Some multiplexers are reversed - this accommodates that.
-    for (int m = 1; m < 5; m++) //Each keyboard has 4 multiplexers (plus 1 for pistons, but that's seperate). Pedals will be different
-    {
-      keyPress[i] = digitalRead(swellInPin[m-1]);
-//    ============ SWELL ============
-      if (keyPress[i] == LOW && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
-      {
-        bitWrite(standbySwell, i + (m*16) - 16, 1);      //  Swell On
-      }
-      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
-      {
-        bitWrite(standbySwell, i + (m*16) - 16, 0);      //  Swell Off
-      }
-      if (keyPress[i] == LOW)
-      {
-        bitWrite(debounceSwell, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
-      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
-                                                         //  then set the actual standby value HIGH
-      if (keyPress[i] == HIGH)
-      {
-        bitWrite(debounceSwell, i + (m*16) - 16, 0);
-      }
-//    ============ GREAT ============
-      keyPress[reversed_i] = digitalRead(greatInPin[m-1]);
-      if (keyPress[reversed_i] == LOW && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
-      {
-        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 1);      //  Great On
-      }
-      if (keyPress[reversed_i] == HIGH && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
-      {
-        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 0);      //  Great Off
-      }
-      if (keyPress[reversed_i] == LOW)
-      {
-        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
-      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
-                                                         //  then set the actual standby value HIGH
-      if (keyPress[reversed_i] == HIGH)
-      {
-        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 0);
-      }
-    }
-    //PISTONS
-    for (int m = 1; m < 3; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
-    {
-      keyPress[i] = digitalRead(pistonInPin[m-1]);
-//      if (keyPress[i] == LOW && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
-//      {
-      if (1 == 1)  {
-        bitWrite(standbyPistons, i + (m*16) - 16, 1);      //  Piston On
-      }
-      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
-      {
-        bitWrite(standbyPistons, i + (m*16) - 16, 0);      //  Piston Off
-      }
-      if (keyPress[i] == LOW)
-      {
-        bitWrite(debouncePistons, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
-      }                                                        //  If it's still LOW when we get back to it above, after a cycle,
-      if (keyPress[i] == HIGH)                                 //  then set the actual standby value HIGH
-      {
-        bitWrite(debouncePistons, i + (m*16) - 16, 0);
-      }
-      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
-    }
-  }
-  activeGreat = standbyGreat;
-  activeSwell = standbySwell;
-  activePedal = standbyPedal;
-  activePistons = standbyPistons;
-//  resetStandby();
-  
-}
-
-void setMuxChannel(int channel) {
-  digitalWrite(muxCtrlPin[0], bitRead(channel, 0)); // A
-  digitalWrite(muxCtrlPin[1], bitRead(channel, 1)); // B
-  digitalWrite(muxCtrlPin[2], bitRead(channel, 2)); // C
-  digitalWrite(muxCtrlPin[3], bitRead(channel, 3)); // D
-}
-
-void checkForKeyChanges()
-{
-  if (activeSwell != pastSwell)
-  {
-    // This is broken... But, becuase the byte is always the same length (as the 64th bit is set high), I don't think I need this?
-//    byteLength = String(activeSwell, BIN).length() - 1;   // Iterate through the uintx_t
-    byteLength = 62; // 64 bits but accounting for the 0-index and the preset 64th bit
-    for (byte i = 0; i < byteLength; i++)
-    {
-      checkActive = bitRead(activeSwell, i);
-      checkPast = bitRead(pastSwell, i);
-      controller(checkPast, checkActive, i + 24, 's', 0);
-    }
-    isManualActive[0] = true;
-    manualActiveTime[0] = millis();
-    MidiUSB.flush();
-    pastSwell = activeSwell;
-    resetActive('s');
-  }
-  if (activeGreat != pastGreat)
-  {
-    byteLength = 62; // 64 bits but accounting for the 0-index
-    for (byte i = 0; i < byteLength; i++)
-    {
-      checkActive = bitRead(activeGreat, i);
-      checkPast = bitRead(pastGreat, i);
-      controller(checkPast, checkActive, i + 24, 'g', 1);
-    }
-    isManualActive[1] = true;
-    manualActiveTime[1] = millis();
-    MidiUSB.flush();
-    pastGreat = activeGreat;
-    resetActive('g');
-  }
-  if (activePedal != pastPedal)
-  {
-    byteLength = 31; // 32 bits but accounting for the 0-index
-    for (byte i = 0; i <= byteLength; i++)
-    {
-      checkActive = bitRead(activePedal, i);
-      checkPast = bitRead(pastPedal, i);
-      controller(checkPast, checkActive, i + 24, 'p', 2);
-    }
-    isManualActive[2] = true;
-    manualActiveTime[2] = millis();
-    MidiUSB.flush();
-    pastPedal = activePedal;
-    resetActive('p');
-  }
-  if (activePistons != pastPistons)
-  {
-    byteLength = 62; // 64 bits but accounting for the 0-index
-    for (byte i = 0; i < byteLength; i++)
-    {
-      checkActive = bitRead(activePistons, i);
-      checkPast = bitRead(pastPistons, i);
-      controller(checkPast, checkActive, i + 24, 'b', 3);
-    }
-    MidiUSB.flush();
-    pastPistons = activePistons;
-    resetActive('b');
-  }
-}
-
-void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_channel)
-{
-  if (checkActive == 1 && checkPast == 0)     //If a key is pressed
-  {
-//    sendStartSignal(key, reg);       //Updated - Key should now reflect the midi key value. (old: This bit should already be the number of the key + 1- e.g. the 0th bit is the 1st key))
-    midiEventPacket_t noteOn = {0x09, 0x90 | reg_channel, key, 127};  // Might need to set velocity to 64?
-    MidiUSB.sendMIDI(noteOn); 
-  }
-  if (checkActive == 0 && checkPast == 1)     //If a key is realeased
-  {
-//    sendStopSignal( key, reg);  
-    midiEventPacket_t noteOff = {0x08, 0x80 | reg_channel, key, 127};  // Might need to set velocity to 64?
-    MidiUSB.sendMIDI(noteOff);  
-  }
-//MidiUSB.flush(); //Moved to checkForKeyChanges()
-}
-
-void sendStartSignal(int key, char man_sel)
-{
-  Serial.print("Called the Start Signal");
-  Serial.print(": ");
-  Serial.print(key, DEC);
-  Serial.print(" - ");
-  Serial.println(man_sel);
-}
-
-void sendStopSignal(int key, char man_sel)
-{
-  Serial.print("Called the Stop Signal");
-  Serial.print(": ");
-  Serial.print(key, DEC);
-  Serial.print(" - ");
-  Serial.println(man_sel);
-}
