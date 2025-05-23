@@ -16,7 +16,7 @@
 #define NUM_GREAT 61
 #define NUM_SWELL 61
 #define NUM_PISTON 15
-#define NUM_PEDALS 31
+#define NUM_PEDALS 32
 // For the record, manuals will be refered to with a 'char' - as follows:
 // Great = 'g'
 // Swell = 's'
@@ -26,7 +26,7 @@
 //const char manuals [] = "gspb";
 const int swellInPin[] = {28, 26, 24, 22};
 const int greatInPin[] = {36, 34, 32, 30};
-const int pedalInPin[] = {42};
+const int pedalInPin[] = {35, 33};
 const int pistonInPin[] = {23, 31}; //Add 31 after pull-up resistors are added
 const int muxCtrlPin[] = {4, 5, 6, 7}; //Multiplexer control pins A, B, C, and D
 const int numOfMuxChannels = 16;  // Number of channels in the multiplexer
@@ -39,9 +39,9 @@ uint64_t pastGreat = 0x8000000000000000;
 uint64_t activeSwell = 0x8000000000000000;
 uint64_t standbySwell = 0x8000000000000000;
 uint64_t pastSwell = 0x8000000000000000;
-uint32_t activePedal = 0x80000000;
-uint32_t standbyPedal = 0x80000000;
-uint32_t pastPedal = 0x80000000;
+uint64_t activePedal = 0x8000000000000000;
+uint64_t standbyPedal = 0x8000000000000000;
+uint64_t pastPedal = 0x8000000000000000;
 uint64_t activePistons = 0x8000000000000000;
 uint64_t standbyPistons = 0x8000000000000000;
 uint64_t pastPistons = 0x8000000000000000;
@@ -50,7 +50,7 @@ uint64_t debounceSwell = 0x8000000000000000;
 uint64_t debounceGreat = 0x8000000000000000;
 uint64_t debouncePedal = 0x8000000000000000;
 uint64_t debouncePistons = 0x8000000000000000;
-int debounceArray[4][63];
+int debounceArray[4][64];
 
 int byteLength;
 byte checkActive;
@@ -74,11 +74,12 @@ void setup() {
   {
     pinMode(pistonInPin[s], INPUT);
     pinMode(activeLED[s], OUTPUT);
+    pinMode(pedalInPin[s], INPUT_PULLUP);
     digitalWrite(activeLED[s], HIGH);
   }
   pinMode(13, OUTPUT);
 
-  Serial.begin(115200);
+  Serial.begin(9600); //115200
   // Some other setup
 }
 void loop() {
@@ -111,49 +112,15 @@ void readKeys()
         {
           bitWrite(standbySwell, i + (m * 16) - 16, 1);
           debounceArray[0][i + (m*16) - 16]++;
-        }
+        };
       } 
       else {
         debounceArray[0][i + (m*16) - 16] = 0; // Reset the counter when the key is released
         bitWrite(standbySwell, i + (m * 16) - 16, 0);  // And flip the active bit for the swell.
       }
 
-//      if (keyPress[i] == LOW && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
-//      {
-//        bitWrite(standbySwell, i + (m*16) - 16, 1);      //  Swell On
-//      }
-//      if (keyPress[i] == HIGH && keyPress[i] != bitRead(debounceSwell, i + (m*16) - 16))
-//      {
-//        bitWrite(standbySwell, i + (m*16) - 16, 0);      //  Swell Off
-//      }
-//      if (keyPress[i] == LOW)
-//      {
-//        bitWrite(debounceSwell, i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
-//      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
-//                                                         //  then set the actual standby value HIGH
-//      if (keyPress[i] == HIGH)
-//      {
-//        bitWrite(debounceSwell, i + (m*16) - 16, 0);
-//      }
 //    ============ GREAT ============
       keyPress[reversed_i] = digitalRead(greatInPin[m-1]);
-//      if (keyPress[reversed_i] == LOW && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
-//      {
-//        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 1);      //  Great On
-//      }
-//      if (keyPress[reversed_i] == HIGH && keyPress[reversed_i] != bitRead(debounceGreat, reversed_i + (m*16) - 16))
-//      {
-//        bitWrite(standbyGreat, reversed_i + (m*16) - 16, 0);      //  Great Off
-//      }
-//      if (keyPress[reversed_i] == LOW)
-//      {
-//        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 1);     //  Debounce Logic. Set the first of two values.
-//      }                                                  //  If it's still LOW when we get back to it above, after a cycle,
-//                                                         //  then set the actual standby value HIGH
-//      if (keyPress[reversed_i] == HIGH)
-//      {
-//        bitWrite(debounceGreat, reversed_i + (m*16) - 16, 0);
-//      }
       if (keyPress[reversed_i] == LOW)
       {
         if (debounceArray[1][reversed_i + (m*16) - 16] < debounceThreshold) 
@@ -167,13 +134,32 @@ void readKeys()
         }
       } 
       else {
+        //(if debounce array, then do this )
         debounceArray[1][reversed_i + (m*16) - 16] = 0; // Reset the counter when the key is released
-        bitWrite(standbyGreat, reversed_i + (m * 16) - 16, 0);  // And flip the active bit for the swell.
+        bitWrite(standbyGreat, reversed_i + (m * 16) - 16, 0);  // And flip the active bit for the great.
       }
     }
-    //PISTONS
-    for (int m = 1; m < 3; m++) //Repeat for each set of banks - 4 per manual (pedals will be different?)
+//    ============= PEDALS ===============
+    for (int m = 1; m < 3; m++)
     {
+      keyPress[i] = digitalRead(pedalInPin[m-1]);
+      if (keyPress[i] == LOW)
+      {
+        if (debounceArray[2][i + (m*16) - 16] < debounceThreshold) 
+        {
+          debounceArray[2][i + (m*16) - 16]++;
+        } 
+        else if (debounceArray[2][i + (m*16) - 16] >= debounceThreshold) 
+        {
+          bitWrite(standbyPedal, i + (m * 16) - 16, 1);
+          debounceArray[2][i + (m*16) - 16]++;
+        }
+      } 
+      else {
+        debounceArray[2][i + (m*16) - 16] = 0; // Reset the counter when the key is released
+        bitWrite(standbyPedal, i + (m * 16) - 16, 0);  // And flip the active bit for the swell.
+      }
+//    ========== PISTONS ===========
       keyPress[i] = digitalRead(pistonInPin[m-1]);
 //      if (keyPress[i] == LOW && keyPress[i] != bitRead(debouncePistons, i + (m*16) - 16))
 //      {
@@ -242,7 +228,7 @@ void checkForKeyChanges()
   
   if (activePedal != pastPedal)
   {
-    byteLength = 31; // 32 bits but accounting for the 0-index
+    byteLength = 32;
     for (byte i = 0; i <= byteLength; i++)
     {
       checkActive = bitRead(activePedal, i);
@@ -371,24 +357,3 @@ void statusController() // Controls status and activity LEDs
     }
   }
 }
-
-//void resetActive(char man_sel)
-//{
-//  //Serial.println("reset called");
-//  if (man_sel == 's')
-//  {
-//    activeSwell = 0x8000000000000000;
-//  }
-//    if (man_sel == 'g')
-//  {
-//    activeGreat = 0x8000000000000000;
-//  }
-//    if (man_sel == 'p')
-//  {
-//    activePedal = 0x80000000;
-//  }
-//    if (man_sel == 'b')
-//  {
-//    activePistons = 0x8000000000000000;
-//  }
-//}
