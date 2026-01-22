@@ -4,17 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Arduino MIDI Conversion Machine v2 - firmware for converting organ keyboard inputs to USB MIDI. Targets Arduino Due (3.3V logic). Uses multiplexed digital inputs to read 4 organ manuals (61 keys each), 32 pedals, 15 pistons, and stop controls. Includes shift register LED driver for 64 stop indicator LEDs.
+Arduino MIDI Conversion Machine v2 - firmware for converting organ keyboard inputs to USB MIDI. Targets Arduino Due (3.3V logic). Uses multiplexed digital inputs to read 4 organ manuals (61 keys each), 32 pedals, 18 pistons, and stop controls. Includes shift register LED driver for 64 stop indicator LEDs.
+
+**Target software**: GrandOrgue (open-source virtual pipe organ)
 
 ## Build & Upload
 
 This is a standard Arduino IDE sketch:
 1. Open `Arduino_MIDI_Machine_v2.ino` in Arduino IDE
 2. Install the MIDIUSB library (Sketch → Include Library → Manage Libraries → search "MIDIUSB")
-3. Select target board (Arduino Leonardo or Mega with USB MIDI support)
+3. Select board: Arduino Due (Programming Port)
 4. Compile and upload
 
-Serial debugging available at 9600 baud.
+**CLI build**: `arduino-cli compile --fqbn arduino:sam:arduino_due_x`
+
+**Dual USB ports on Due**:
+- **Programming Port**: Serial Monitor (debug output at 9600 baud)
+- **Native USB Port**: USB MIDI (connect to computer running GrandOrgue)
+
+Both ports can be connected simultaneously for debugging while using MIDI.
 
 ## Architecture
 
@@ -37,7 +45,7 @@ Each keyboard division uses triple-state tracking with 64-bit integers:
 - Channel 1: Great manual (Note On/Off)
 - Channel 2: Choir manual (Note On/Off)
 - Channel 3: Pedals (Note On/Off)
-- Channel 4: Pistons (Control Change, send only, CC# 0-17)
+- Channel 4: Pistons (Control Change, send only, CC# 0-31, 18 pistons across 2 banks)
 - Channel 5: Stops (Control Change, bidirectional, CC# 0-63)
 
 ### Debounce System
@@ -143,6 +151,29 @@ RX CC ch=5 cc#=10 val=0           # Incoming CC (stop from software)
 RX NoteOn ch=0 note=60 vel=127    # Incoming note
 ```
 
+## Watchdog Timer
+
+The sketch enables a ~4 second watchdog timer to handle a known issue where some Arduino Due boards (especially counterfeits) freeze on USB connection or startup.
+
+- `WDT_Enable()` in `setup()` starts the watchdog
+- `WDT_Restart()` in `loop()` feeds it each iteration
+- If the board freezes, it auto-resets after ~4 seconds
+- `WDT_MR_WDDBGHLT` flag pauses watchdog during debugging
+
+## Input Bit Mapping
+
+**Important**: Inputs are mapped to bit positions via formula `i + (m*16) - 16` where `i` = mux channel (0-15) and `m` = bank number.
+
+| Input Type | Banks | Bit Range | Notes |
+|------------|-------|-----------|-------|
+| Manuals | 4 | 0-63 | 61 keys used (bits 0-60) |
+| Pedals | 2 | 0-31 | 32 pedals |
+| Pistons | 2 | 0-31 | 18 pistons, spread across both banks |
+| Stops | 4 | 0-63 | 64 stops |
+
+When modifying loops that check these inputs, ensure you iterate through the full bit range for the input type, not just the count of physical inputs.
+
 ## Known Issues
 - Velocity is hardcoded to 127 (no dynamic support)
 - No stuck key recovery (mentioned in TODO but not implemented)
+- Some counterfeit Due boards may freeze on USB connect (watchdog timer mitigates this)
