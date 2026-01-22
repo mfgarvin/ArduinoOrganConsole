@@ -13,9 +13,23 @@
 // To do list: LED Circut & timing code, auto flush stuck keys, prune and clean code.
 
 #include "MIDIUSB.h"
+#include <SPI.h>
+
+// Debug mode - set to true to print all MIDI messages to Serial
+const bool DEBUG_MIDI = true;
+
+// Shift register LED driver configuration (Arduino Due)
+// Due SPI uses dedicated SPI header (6-pin ICSP-style near SAM3X chip):
+//   MOSI = SPI header pin 4 (not a numbered digital pin)
+//   SCK  = SPI header pin 3 (not a numbered digital pin)
+// Latch pin can be any digital pin
+const int ledLatchPin = 53;       // STCP - storage register clock
+const int numLedRegisters = 8;    // 8 shift registers for 64 LEDs
+uint8_t ledBuffer[8];             // LED state buffer
+
 // Just for reference...
 #define NUM_KEYS 61
-#define NUM_PISTON 15
+#define NUM_PISTON 18
 #define NUM_PEDALS 32
 // For the record, manuals will be refered to with a 'char' - as follows:
 // Great = 'g'
@@ -51,9 +65,11 @@ uint64_t pastPedal = 0x8000000000000000;
 uint64_t activePistons = 0x8000000000000000;
 uint64_t standbyPistons = 0x8000000000000000;
 uint64_t pastPistons = 0x8000000000000000;
-uint64_t activeStops = 0x8000000000000000;
+uint64_t activeStops = 0x8000000000000000;    // Raw button state (for edge detection)
 uint64_t standbyStops = 0x8000000000000000;
 uint64_t pastStops = 0x8000000000000000;
+uint64_t stopState = 0x0000000000000000;      // Logical stop state (toggled by buttons, synced with software)
+uint64_t stopStatePrev = 0x0000000000000000;  // Previous logical state (for change detection)
 //Trying some debouce stuff here
 uint64_t debounceSwell = 0x8000000000000000;
 uint64_t debounceGreat = 0x8000000000000000;
@@ -83,7 +99,7 @@ void setup() {
     pinMode(choirInPin[s], INPUT_PULLUP);
     pinMode(stopPin[s], INPUT_PULLUP);
     pinMode(ledPin[s], OUTPUT);
-    digitalWrite(ledPin[s], HIGH);
+    digitalWrite(ledPin[s], HIGH); //For Testing LEDs
   }
   for (int s = 0; s < 2; s++) //For 0-1...
   {
@@ -94,18 +110,18 @@ void setup() {
   }
   pinMode(13, OUTPUT);
 
+  setupLEDs();  // Initialize shift register LED driver
+
   Serial.begin(9600); //115200
 //  delay(1000);
 //  Serial.print("Hello!");
   // Some other setup
 }
 void loop() {
-  readKeys();
- checkForKeyChanges();
-//  flushMIDIbuffer(); // OLD
-//  refresh(); // OLD
+  processMidiInput(); // Handle incoming MIDI (stop sync from software)
+  readKeys();         // VITAL
+  checkForKeyChanges();// VITAL
   statusController();
-  midiReadTest();
 }
 
 void readKeys()
@@ -356,27 +372,54 @@ void checkForKeyChanges()
     manualActiveTime[3] = millis();
     pastPedal = activePedal;
   }
+  // Pistons: send CC on channel 4 (unidirectional, Arduino -> GrandOrgue only)
   if (activePistons != pastPistons)
   {
-    byteLength = 62; // 64 bits but accounting for the 0-index
-    for (byte i = 0; i < byteLength; i++)
+    for (byte i = 0; i < 18; i++)  // 18 pistons
     {
       checkActive = bitRead(activePistons, i);
       checkPast = bitRead(pastPistons, i);
-      controller(checkPast, checkActive, i + 24, 'b', 4);
+      if (checkActive != checkPast)
+      {
+        sendPistonCC(i, checkActive);
+      }
     }
     pastPistons = activePistons;
   }
+  // Stop buttons: detect press events and toggle stopState
   if (activeStops != pastStops)
   {
-    byteLength = 62; // 64 bits but accounting for the 0-index and the preset 64th bit
-    for (byte i = 0; i < byteLength; i++)
+    for (byte i = 0; i < 64; i++)
     {
       checkActive = bitRead(activeStops, i);
       checkPast = bitRead(pastStops, i);
-      controller(checkPast, checkActive, i + 24, 'v', 5);
+      // Button press = transition from 0 to 1 (active high after debounce)
+      if (checkActive == 1 && checkPast == 0)
+      {
+        // Toggle the logical stop state
+        bitWrite(stopState, i, !bitRead(stopState, i));
+      }
     }
     pastStops = activeStops;
+  }
+
+  // Send CC messages and update LEDs when logical stop state changes
+  if (stopState != stopStatePrev)
+  {
+    for (byte i = 0; i < 64; i++)
+    {
+      byte currentBit = bitRead(stopState, i);
+      byte prevBit = bitRead(stopStatePrev, i);
+      if (currentBit != prevBit)
+      {
+        // Only send CC if change came from hardware (not from incoming MIDI)
+        // We detect this by checking if we already logged it in processMidiInput
+        sendStopCC(i, currentBit);
+
+      }
+    }
+    stopStatePrev = stopState;
+    updateStopLEDs(stopState);  // Update stop indicator LEDs
   }
   MidiUSB.flush();
 }
@@ -389,6 +432,16 @@ void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_c
     MidiUSB.sendMIDI(noteOn);
     keyEvent = true;
     delayMicroseconds(70);
+
+    if (DEBUG_MIDI) {
+      Serial.print("TX NoteOn  ch=");
+      Serial.print(reg_channel);
+      Serial.print(" note=");
+      Serial.print(key);
+      Serial.print(" (");
+      Serial.print(reg);
+      Serial.println(")");
+    }
   }
   if (checkActive == 0 && checkPast == 1)     //If a key is realeased
   {
@@ -396,23 +449,116 @@ void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_c
     MidiUSB.sendMIDI(noteOff);
     keyEvent = true;
     delayMicroseconds(70);
+
+    if (DEBUG_MIDI) {
+      Serial.print("TX NoteOff ch=");
+      Serial.print(reg_channel);
+      Serial.print(" note=");
+      Serial.print(key);
+      Serial.print(" (");
+      Serial.print(reg);
+      Serial.println(")");
+    }
   }
 }
 
-void midiReadTest()
+// Send Control Change message for stop state
+// Channel 5, CC number = stop index (0-63), value = 127 (on) or 0 (off)
+void sendStopCC(byte stopIndex, byte state)
+{
+  byte ccValue = state ? 127 : 0;
+  midiEventPacket_t cc = {0x0B, 0xB5, stopIndex, ccValue};  // 0x0B = CC header, 0xB5 = CC on channel 5
+  MidiUSB.sendMIDI(cc);
+  keyEvent = true;
+  delayMicroseconds(70);
+
+  if (DEBUG_MIDI) {
+    Serial.print("TX CC ch=5 cc#=");
+    Serial.print(stopIndex);
+    Serial.print(" val=");
+    Serial.print(ccValue);
+    Serial.println(" (stop)");
+  }
+}
+
+// Send Control Change message for piston press/release
+// Channel 4, CC number = piston index (0-17), value = 127 (pressed) or 0 (released)
+void sendPistonCC(byte pistonIndex, byte state)
+{
+  byte ccValue = state ? 127 : 0;
+  midiEventPacket_t cc = {0x0B, 0xB4, pistonIndex, ccValue};  // 0x0B = CC header, 0xB4 = CC on channel 4
+  MidiUSB.sendMIDI(cc);
+  keyEvent = true;
+  delayMicroseconds(70);
+
+  if (DEBUG_MIDI) {
+    Serial.print("TX CC ch=4 cc#=");
+    Serial.print(pistonIndex);
+    Serial.print(" val=");
+    Serial.print(ccValue);
+    Serial.println(" (piston)");
+  }
+}
+
+// Process incoming MIDI messages
+// Handles CC messages on channel 5 to update stop state from software
+void processMidiInput()
 {
   midiEventPacket_t rx;
   do {
     rx = MidiUSB.read();
     if (rx.header != 0) {
-      Serial.print("Received: ");
-      Serial.print(rx.header, HEX);
-      Serial.print("-");
-      Serial.print(rx.byte1, HEX);
-      Serial.print("-");
-      Serial.print(rx.byte2, HEX);
-      Serial.print("-");
-      Serial.println(rx.byte3, HEX);
+      byte messageType = rx.byte1 & 0xF0;  // Upper nibble = message type
+      byte channel = rx.byte1 & 0x0F;      // Lower nibble = channel
+
+      // Log all incoming MIDI
+      if (DEBUG_MIDI) {
+        Serial.print("RX ");
+        if (messageType == 0x90) {
+          Serial.print("NoteOn  ch=");
+          Serial.print(channel);
+          Serial.print(" note=");
+          Serial.print(rx.byte2);
+          Serial.print(" vel=");
+          Serial.println(rx.byte3);
+        } else if (messageType == 0x80) {
+          Serial.print("NoteOff ch=");
+          Serial.print(channel);
+          Serial.print(" note=");
+          Serial.print(rx.byte2);
+          Serial.print(" vel=");
+          Serial.println(rx.byte3);
+        } else if (messageType == 0xB0) {
+          Serial.print("CC ch=");
+          Serial.print(channel);
+          Serial.print(" cc#=");
+          Serial.print(rx.byte2);
+          Serial.print(" val=");
+          Serial.println(rx.byte3);
+        } else {
+          Serial.print("raw=");
+          Serial.print(rx.header, HEX);
+          Serial.print(" ");
+          Serial.print(rx.byte1, HEX);
+          Serial.print(" ");
+          Serial.print(rx.byte2, HEX);
+          Serial.print(" ");
+          Serial.println(rx.byte3, HEX);
+        }
+      }
+
+      // Check for Control Change on channel 5 (stop control)
+      if (messageType == 0xB0 && channel == 5) {
+        byte ccNumber = rx.byte2;   // CC number = stop index (0-63)
+        byte ccValue = rx.byte3;    // CC value: 127 = on, 0 = off
+
+        if (ccNumber < 64) {
+          // Update logical stop state based on CC value
+          byte newState = (ccValue >= 64) ? 1 : 0;  // Threshold at 64
+          bitWrite(stopState, ccNumber, newState);
+          // Note: LED update and stopStatePrev sync happens in checkForKeyChanges()
+        }
+      }
     }
   } while (rx.header != 0);
 }
@@ -511,4 +657,38 @@ void statusController() // Controls status and activity LEDs
       }
     }
   }
+}
+
+// ============ SHIFT REGISTER LED DRIVER ============
+// Drives 64 stop indicator LEDs via 8x 74HC595 daisy chain
+// Arduino Due: Uses SPI header (6-pin near SAM3X) for MOSI/SCK, Pin 53 for Latch
+// Note: Due is 3.3V - power 74HC595s at 3.3V to match logic levels
+
+void setupLEDs() {
+  pinMode(ledLatchPin, OUTPUT);
+  digitalWrite(ledLatchPin, LOW);
+
+  SPI.begin();
+  SPI.setClockDivider(SPI_CLOCK_DIV4);  // 4 MHz on 16MHz Arduino
+
+  // Clear all LEDs on startup
+  updateStopLEDs(0);
+}
+
+void updateStopLEDs(uint64_t stopState) {
+  // Convert 64-bit stop state to 8 bytes
+  // Bit 0 of stopState maps to LED 0 on first register
+  // Bit 63 of stopState maps to LED 63 on eighth register
+  // Output is inverted (~) for common-anode LED wiring (LOW = LED ON)
+
+  for (int i = 0; i < numLedRegisters; i++) {
+    ledBuffer[i] = ~((stopState >> (i * 8)) & 0xFF);
+  }
+
+  // Shift out all bytes (last register first due to daisy chain)
+  digitalWrite(ledLatchPin, LOW);
+  for (int i = numLedRegisters - 1; i >= 0; i--) {
+    SPI.transfer(ledBuffer[i]);
+  }
+  digitalWrite(ledLatchPin, HIGH);  // Latch data to outputs
 }

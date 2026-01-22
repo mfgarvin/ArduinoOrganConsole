@@ -1,0 +1,197 @@
+LED SHIFT REGISTER CIRCUIT - 74HC595 Daisy Chain for 64 Stop LEDs
+==================================================================
+
+OVERVIEW
+--------
+8x 74HC595 shift registers driving 64 LEDs for organ stop indicators.
+Uses Arduino Due hardware SPI for fast updates (~20us for all 64 LEDs).
+
+IMPORTANT: Arduino Due operates at 3.3V logic levels!
+
+This design uses COMMON-ANODE wiring with split voltage rails:
+  - 74HC595 chips powered at 3.3V (matches Due logic)
+  - LEDs powered from 5V (for brightness)
+  - Chips sink current when output is LOW (LED ON)
+
+
+ARDUINO DUE PIN CONNECTIONS
+---------------------------
+The Due uses a dedicated 6-pin SPI header (located near the SAM3X chip),
+NOT numbered digital pins like the Mega.
+
+SPI Header Pinout:
+        ┌─────────┐
+   MISO │ 1     2 │ +3.3V
+    SCK │ 3     4 │ MOSI
+  RESET │ 5     6 │ GND
+        └─────────┘
+
+Connections:
+  SPI Header Pin 4 (MOSI) --> Data (DS) on first 74HC595
+  SPI Header Pin 3 (SCK)  --> Clock (SHCP) on ALL 74HC595s (parallel)
+  Digital Pin 53          --> Latch (STCP) on ALL 74HC595s (parallel)
+
+
+74HC595 PINOUT
+--------------
+                 ┌───U───┐
+          QB  1 ─┤       ├─ 16  VCC (3.3V from Due)
+          QC  2 ─┤       ├─ 15  QA
+          QD  3 ─┤       ├─ 14  DS (Data In)
+          QE  4 ─┤       ├─ 13  OE (Output Enable, tie to GND)
+          QF  5 ─┤       ├─ 12  STCP (Latch)
+          QG  6 ─┤       ├─ 11  SHCP (Clock)
+          QH  7 ─┤       ├─ 10  MR (Reset, tie to 3.3V)
+         GND  8 ─┤       ├─ 9   Q7' (Serial Out to next chip)
+                 └───────┘
+
+
+DAISY CHAIN WIRING
+------------------
+
+Arduino Due                     Chip 1              Chip 2                    Chip 8
+===========                     ======              ======                    ======
+
+SPI Header MOSI ─────────────> DS (14)
+
+SPI Header SCK ──────────────> SHCP (11)─────────> SHCP (11)───── ... ─────> SHCP (11)
+
+Digital Pin 53 ──────────────> STCP (12)─────────> STCP (12)───── ... ─────> STCP (12)
+
+                               Q7' (9)───────────> DS (14)        ... ─────> DS (14)
+
+3.3V ────────────────────────> VCC (16)──────────> VCC (16)────── ... ─────> VCC (16)
+                             > MR (10)           > MR (10)                 > MR (10)
+
+GND ─────────────────────────> GND (8)───────────> GND (8)─────── ... ─────> GND (8)
+                             > OE (13)           > OE (13)                 > OE (13)
+
+
+LED CONNECTIONS - COMMON ANODE (per chip, 8 LEDs each)
+------------------------------------------------------
+LEDs are wired to sink current from 5V through the 74HC595 outputs.
+Output LOW = LED ON, Output HIGH = LED OFF (handled in code with inversion)
+
+                              +5V Rail
+                                 │
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+           [150Ω]             [150Ω]             [150Ω]
+              │                  │                  │
+              ▼                  ▼                  ▼
+           (Anode)            (Anode)            (Anode)
+            LED 0              LED 1      ...      LED 7
+           (Cathode)          (Cathode)          (Cathode)
+              │                  │                  │
+              ▼                  ▼                  ▼
+           QA (15)            QB (1)             QH (7)
+              │                  │                  │
+              └──────────────────┴──────────────────┘
+                                 │
+                           74HC595 GND
+                                 │
+                            Common GND
+
+
+ACCENT DIAGRAM (per LED):
+
+    +5V ────[150Ω]────┬──── LED Anode (+)
+                      │
+                 LED Cathode (-)
+                      │
+                      ▼
+               74HC595 Output
+                      │
+                     GND
+
+
+HOW IT WORKS
+------------
+When 74HC595 output is LOW (≈0V):
+  Current path: +5V → 150Ω → LED → 74HC595 output → GND
+  Voltage across LED circuit: 5V - 0.4V(output) = 4.6V
+  LED current: (5V - 2V - 0.4V) / 150Ω ≈ 17mA
+  Result: LED ON
+
+When 74HC595 output is HIGH (≈3.3V):
+  Voltage across LED circuit: 5V - 3.3V = 1.7V
+  This is below LED forward voltage (~2V)
+  Result: LED OFF
+
+
+BIT-TO-LED MAPPING
+------------------
+activeStops bit 0  --> Chip 1, QA --> LED 0
+activeStops bit 7  --> Chip 1, QH --> LED 7
+activeStops bit 8  --> Chip 2, QA --> LED 8
+activeStops bit 15 --> Chip 2, QH --> LED 15
+...
+activeStops bit 56 --> Chip 8, QA --> LED 56
+activeStops bit 63 --> Chip 8, QH --> LED 63
+
+Note: Code inverts the bits (~stopState) so that stopState bit=1 means LED ON.
+
+
+BILL OF MATERIALS
+-----------------
+Qty   Part              Notes
+---   ----              -----
+8     74HC595           Standard shift registers (NOT 74HCT595)
+64    150 ohm resistor  ~17mA LED current (or 180Ω for ~14mA)
+64    LEDs              Any color (red, yellow, green, blue all work at 5V)
+8     100nF capacitor   Decoupling, one per chip between VCC and GND
+
+
+RESISTOR SELECTION
+------------------
+R = (Vsupply - Vf - Vout_low) / I
+
+For 5V supply, typical LED Vf ~2V, output LOW ~0.4V:
+  Target 15mA: R = (5 - 2 - 0.4) / 0.015 = 173Ω --> use 180Ω
+  Target 17mA: R = (5 - 2 - 0.4) / 0.017 = 153Ω --> use 150Ω
+  Target 10mA: R = (5 - 2 - 0.4) / 0.010 = 260Ω --> use 270Ω
+
+Blue/white LEDs (Vf ~3.2V):
+  Target 15mA: R = (5 - 3.2 - 0.4) / 0.015 = 93Ω --> use 100Ω
+
+
+POWER BUDGET
+------------
+74HC595 at 3.3V:
+  - Each chip can sink up to 70mA total
+  - 8 LEDs × 17mA = 136mA per chip (exceeds spec!)
+  - Use 270Ω resistors (10mA) if all 8 LEDs may be on simultaneously
+  - Or accept that max brightness only achieved with few LEDs on
+
+5V rail:
+  - 64 LEDs × 17mA = 1.1A max (if all on)
+  - Due's 5V pin can supply ~800mA from USB
+  - Use external 5V supply if many LEDs will be on simultaneously
+
+3.3V rail:
+  - Only powering 74HC595 chips (minimal current)
+  - Well within Due's 3.3V capacity
+
+
+NOTES
+-----
+1. This common-anode design allows use of standard 74HC595 chips
+   while still driving LEDs at 5V for good brightness.
+
+2. The code inverts the output bits: ~stopState
+   So activeStops bit = 1 → output LOW → LED ON
+
+3. Add 100nF decoupling capacitor close to each chip's VCC/GND pins.
+
+4. Keep wires short between Arduino SPI header and first chip.
+
+5. The latch pin (STCP) updates all outputs simultaneously when pulsed HIGH,
+   preventing ghosting during shift operations.
+
+6. GND must be shared between Due, 74HC595 chips, and 5V supply.
+
+7. If LEDs are too bright, increase resistor values.
+   If too dim, decrease resistor values (but watch chip current limits).
+
+8. For testing without LEDs, you can temporarily connect outputs to
+   3.3V through 1kΩ resistors and measure voltage to verify shifting works.
