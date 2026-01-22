@@ -373,9 +373,10 @@ void checkForKeyChanges()
     pastPedal = activePedal;
   }
   // Pistons: send CC on channel 4 (unidirectional, Arduino -> GrandOrgue only)
+  // Pistons span bits 0-31 across two input banks
   if (activePistons != pastPistons)
   {
-    for (byte i = 0; i < 18; i++)  // 18 pistons
+    for (byte i = 0; i < 32; i++)
     {
       checkActive = bitRead(activePistons, i);
       checkPast = bitRead(pastPistons, i);
