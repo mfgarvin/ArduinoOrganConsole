@@ -91,6 +91,10 @@ uint32_t lastPush;
 int refreshInterval = 1000; //Milliseconds
 
 void setup() {
+  // Enable watchdog timer with ~4 second timeout
+  // Auto-resets the board if it freezes (common issue with some Due boards)
+  WDT_Enable(WDT, 0x2000 | WDT_MR_WDRSTEN | WDT_MR_WDDBGHLT);
+
   for (int s = 0; s < 4; s++)  // For 0-3...
   {
     pinMode(muxCtrlPin[s], OUTPUT);
@@ -118,6 +122,7 @@ void setup() {
   // Some other setup
 }
 void loop() {
+  WDT_Restart(WDT);   // Feed the watchdog to prevent reset
   processMidiInput(); // Handle incoming MIDI (stop sync from software)
   readKeys();         // VITAL
   checkForKeyChanges();// VITAL
