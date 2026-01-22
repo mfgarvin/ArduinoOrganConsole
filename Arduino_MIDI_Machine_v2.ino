@@ -278,7 +278,7 @@ void readKeys()
       {
         bitWrite(debouncePistons, i + (m*16) - 16, 0);
       }
-      keyPress[i] == HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
+      keyPress[i] = HIGH; //Reset the keyPress for the next use. I could probably get rid of this?
     }
   }
   activeGreat = standbyGreat;
@@ -346,7 +346,7 @@ void checkForKeyChanges()
   if (activePedal != pastPedal)
   {
     byteLength = 32;
-    for (byte i = 0; i <= byteLength; i++)
+    for (byte i = 0; i < byteLength; i++)
     {
       checkActive = bitRead(activePedal, i);
       checkPast = bitRead(pastPedal, i);
@@ -376,10 +376,9 @@ void checkForKeyChanges()
       checkPast = bitRead(pastStops, i);
       controller(checkPast, checkActive, i + 24, 'v', 5);
     }
-    isManualActive[2] = true;
-    manualActiveTime[2] = millis();
-    pastChoir = activeChoir;
+    pastStops = activeStops;
   }
+  MidiUSB.flush();
 }
 
 void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_channel)
@@ -398,7 +397,6 @@ void controller(byte checkPast, byte checkActive, byte key, char reg, byte reg_c
     keyEvent = true;
     delayMicroseconds(70);
   }
-MidiUSB.flush();
 }
 
 void midiReadTest()
